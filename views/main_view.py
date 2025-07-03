@@ -1,10 +1,20 @@
+"""
+Versión “responsive” completa de tu visor de datos.
+Requiere:
+  pip install pandas customtkinter
+  y tu módulo db.connection con get_db_connection / get_cruce_data
+"""
+
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox
 import pandas as pd
 from db.connection import get_db_connection, get_cruce_data
 
-# Se supone que 'desired_cols' es la lista unificada de nombres de las columnas
+# ------------------------- CONFIGURACIÓN GLOBAL ---------------------------
+ctk.set_appearance_mode("light")     # “dark” u “auto” si prefieres
+ctk.set_default_color_theme("blue")  # o el tema que uses habitualmente
+
 desired_cols = [
     "CodigoBarra",
     "Referencia",
@@ -16,213 +26,253 @@ desired_cols = [
     "CategoriaCodigo",
     "CategoriaNombre",
     "Linea",
-    "CantidadInicial",    # Antes "Cantidad"
-    "Cantidad_Inicial_Agrupada",   # Antes "CantidadTotal"
-    "ExistenciaActual",   # Antes "Existencia_Total"
+    "CantidadInicial",
+    "Cantidad_Inicial_Agrupada",
+    "ExistenciaActual",
     "correccion",
     "NumeroTransferencia",
-    "FechaLlegada",       # Fecha original (para ordenamiento)
+    "FechaLlegada",
     "observacion",
     "Queda",
-    "Vendido"             # Nueva columna: ExistenciaActual / CantidadInicial
+    "Vendido"
 ]
 
+# -------------------------------------------------------------------------
+
+
 class MainView(ctk.CTk):
+
     def __init__(self, refresh_callback):
         super().__init__()
         self.title("Previsualización de Consulta Cruzada")
-        self.refresh_callback = refresh_callback
         self.geometry("900x600")
-        self.df_cruce = None  
+        self.refresh_callback = refresh_callback
+        self.df_cruce = None
 
-        # Frame de botones superior
-        self.button_frame = ctk.CTkFrame(self)
-        self.button_frame.pack(side="top", fill="x", padx=10, pady=10)
+        # ---------- *GRID* PRINCIPAL (3 filas) ----------------------------
+        self.grid_rowconfigure(0, weight=0)      # Botonera
+        self.grid_rowconfigure(1, weight=0)      # Filtros (se crea después)
+        self.grid_rowconfigure(2, weight=1)      # Datos (Treeview)
+        self.grid_columnconfigure(0, weight=1)
 
-        self.import_btn = ctk.CTkButton(self.button_frame, text="Importar Datos", command=self.import_cruce)
-        self.import_btn.pack(side="left", padx=5)
-        
-        # Agrupamos los filtros en un frame, incluyendo un selector de fechas
-        self.filter_frame = None
-        
-        # Botón para seleccionar la opción de fecha a utilizar
-        # Usaremos radiobuttons para que el usuario pueda seleccionar cuál filtro de fecha aplicar.
-        self.fecha_option = tk.IntVar(value=2)  # Por defecto valor 2 (2024/01/01 hasta hoy)
-        
-        # Creamos un frame para alojar estos radiobuttons dentro del mismo panel de filtros.
-        self.fecha_frame = ctk.CTkFrame(self.button_frame)
-        self.fecha_frame.pack(side="left", padx=10)
-        ctk.CTkLabel(self.fecha_frame, text="Filtro por fecha:").pack(side="top")
-        # Opción 1: Desde 2023/01/01
-        self.rb_fecha1 = ctk.CTkRadioButton(self.fecha_frame, text="2023/01/01 - Actual", variable=self.fecha_option, value=1)
-        self.rb_fecha1.pack(side="left", anchor="w", padx="10")
-        # Opción 2: Desde 2024/01/01
-        self.rb_fecha2 = ctk.CTkRadioButton(self.fecha_frame, text="2024/01/01 - Actual", variable=self.fecha_option, value=2)
-        self.rb_fecha2.pack(side="top", anchor="w")
+        # ---------- 1 · BOTONES + RADIOBOTONES ---------------------------
+        self._build_button_bar()
 
-        self.tabview = ctk.CTkTabview(self, width=500, height=450)
-        self.tabview.pack(expand=True, fill="both", padx=10, pady=10)
+        # ---------- 2 · TABVIEW DATOS ------------------------------------
+        self.tabview = ctk.CTkTabview(self)
+        self.tabview.grid(row=2, column=0, sticky="nsew", padx=10, pady=10)
         self.tabview.add("Cruce")
-
         self.cruce_frame = self.tabview.tab("Cruce")
-        self.cruce_container = tk.Frame(self.cruce_frame)
-        self.cruce_container.pack(expand=True, fill="both", padx=10, pady=10)
+        self._build_treeview(self.cruce_frame)
+
+        # El frame de filtros se insertará tras la primera importación
+        self.filter_frame = None
+
+    # ---------------------------------------------------------------------
+    #   CONSTRUCCIÓN DE COMPONENTES
+    # ---------------------------------------------------------------------
+
+    # Botonera superior ----------------------------------------------------
+    def _build_button_bar(self):
+        self.button_frame = ctk.CTkFrame(self)
+        self.button_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        self.button_frame.grid_columnconfigure(0, weight=0)
+        self.button_frame.grid_columnconfigure(1, weight=1)
+
+        # Botón «Importar Datos»
+        self.import_btn = ctk.CTkButton(
+            self.button_frame, text="Importar Datos", command=self.import_cruce
+        )
+        self.import_btn.grid(row=0, column=0, sticky="w")
+
+        # Selector de rango de fechas
+        self.fecha_option = tk.IntVar(value=2)
+        self.fecha_frame = ctk.CTkFrame(self.button_frame)
+        self.fecha_frame.grid(row=0, column=1, sticky="e", padx=20)
+
+        ctk.CTkLabel(self.fecha_frame, text="Filtro por fecha:").pack(anchor="w")
+        ctk.CTkRadioButton(
+            self.fecha_frame, text="2023/01/01 - Actual", variable=self.fecha_option, value=1
+        ).pack(anchor="w")
+        ctk.CTkRadioButton(
+            self.fecha_frame, text="2024/01/01 - Actual", variable=self.fecha_option, value=2
+        ).pack(anchor="w")
+
+    # Treeview + scrollbars ------------------------------------------------
+    def _build_treeview(self, parent):
+        container = tk.Frame(parent)
+        container.pack(expand=True, fill="both")
+
         self.tree_cruce = ttk.Treeview(
-            self.cruce_container, 
-            columns=desired_cols, 
-            show="headings", 
-            height=20  # Ajusta este valor de acuerdo a tus necesidades
+            container,
+            columns=desired_cols,
+            show="headings"
         )
         for col in desired_cols:
             self.tree_cruce.heading(col, text=col)
-            self.tree_cruce.column(col, width=120, anchor="center")
-        
-        self.tree_cruce.grid(row=0, column=0, sticky="nsew")
-        self.cruce_container.grid_rowconfigure(0, weight=1)
-        self.cruce_container.grid_columnconfigure(0, weight=1)
-        
-        scrollbar_cruce = ttk.Scrollbar(self.cruce_container, orient="vertical", command=self.tree_cruce.yview)
-        self.tree_cruce.configure(yscrollcommand=scrollbar_cruce.set)
-        scrollbar_cruce.grid(row=0, column=1, sticky="ns")
-        
-        h_scrollbar_cruce = ttk.Scrollbar(self.cruce_container, orient="horizontal", command=self.tree_cruce.xview)
-        self.tree_cruce.configure(xscrollcommand=h_scrollbar_cruce.set)
-        h_scrollbar_cruce.grid(row=1, column=0, sticky="ew")
+            self.tree_cruce.column(col, width=120, anchor="center", stretch=True)
 
+        self.tree_cruce.grid(row=0, column=0, sticky="nsew")
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        vsb = ttk.Scrollbar(container, orient="vertical", command=self.tree_cruce.yview)
+        hsb = ttk.Scrollbar(container, orient="horizontal", command=self.tree_cruce.xview)
+        self.tree_cruce.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
+        container.bind("<Configure>", self._auto_resize_columns)
         self.tree_cruce.bind("<Button-3>", self.show_context_menu)
 
+    # Ajusta el ancho de cada columna cuando cambie el contenedor
+    def _auto_resize_columns(self, event):
+        total = event.width
+        col_w = max(90, int(total / len(desired_cols)))
+        for col in desired_cols:
+            self.tree_cruce.column(col, width=col_w)
+
+    # Filtros (se crea solo una vez) --------------------------------------
     def create_filter_frame(self):
-        """
-    Crea el panel de filtros una vez importados los datos.
-    Se incluyen campos para: Código Barra, Referencia, Categoría, Línea, Código de Fábrica,
-    y un bloque de filtro de fecha en línea (Fecha Inicio y Fecha Fin).
-        """
+        self.label_font = ctk.CTkFont(size=11)
+
         self.filter_frame = ctk.CTkFrame(self)
-        self.filter_frame.pack(side="top", fill="x", padx=10, pady=10)
+        self.filter_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
 
-        self.codigo_barra_label = ctk.CTkLabel(self.filter_frame, text="Código Barra:", height=30)
-        self.codigo_barra_label.pack(side="left", padx=(5, 2))
-        self.codigo_barra_entry = ctk.CTkEntry(self.filter_frame)
-        self.codigo_barra_entry.pack(side="left", padx=(2, 10))
+        # Columnas etiqueta / campo
+        for c in range(0, 6, 2):
+            self.filter_frame.grid_columnconfigure(c, weight=0)
+            self.filter_frame.grid_columnconfigure(c + 1, weight=1, uniform="entry")
 
-        self.referencia_label = ctk.CTkLabel(self.filter_frame, text="Referencia:", height=30)
-        self.referencia_label.pack(side="left", padx=(5, 2))
-        self.referencia_entry = ctk.CTkEntry(self.filter_frame)
-        self.referencia_entry.pack(side="left", padx=(2, 10))
+        # Helper para pares etiqueta-campo
+        def _pair(r, c, text):
+            ctk.CTkLabel(self.filter_frame, text=text,
+                         font=self.label_font, height=24)\
+                .grid(row=r, column=c, padx=(2, 2), pady=2, sticky="w")
+            entry = ctk.CTkEntry(self.filter_frame)
+            entry.grid(row=r, column=c + 1, padx=(2, 10), pady=2, sticky="ew")
+            return entry
 
-        self.categoria_label = ctk.CTkLabel(self.filter_frame, text="Categoría:", height=30)
-        self.categoria_label.pack(side="left", padx=(5, 2))
-        self.categoria_entry = ctk.CTkEntry(self.filter_frame)
-        self.categoria_entry.pack(side="left", padx=(2, 10))
+        # ---- Fila 0 ----
+        self.codigo_barra_entry = _pair(0, 0, "Código Barra:")
+        self.referencia_entry   = _pair(0, 2, "Referencia:")
+        self.categoria_entry    = _pair(0, 4, "Categoría:")
 
-        self.linea_label = ctk.CTkLabel(self.filter_frame, text="Línea:", height=30)
-        self.linea_label.pack(side="left", padx=(5, 2))
-        self.linea_entry = ctk.CTkEntry(self.filter_frame)
-        self.linea_entry.pack(side="left", padx=(2, 10))
+        # ---- Fila 1 ----
+        self.linea_entry   = _pair(1, 0, "Línea:")
+        self.fabrica_entry = _pair(1, 2, "Código de Fábrica:")
 
-        self.fabrica_label = ctk.CTkLabel(self.filter_frame, text="Código de Fábrica:", height=30)
-        self.fabrica_label.pack(side="left", padx=(5, 2))
-        self.fabrica_entry = ctk.CTkEntry(self.filter_frame)
-        self.fabrica_entry.pack(side="left", padx=(2, 10))
-    
-    # Asignamos peso a las columnas correspondientes a los Entry para que se expandan
-        self.fecha_frame.grid_columnconfigure(1, weight=1)
-        self.fecha_frame.grid_columnconfigure(3, weight=1)
-    
-        self.buscar_btn = ctk.CTkButton(self.filter_frame, text="Buscar", command=self.buscar_datos)
-        self.buscar_btn.pack(side="left", padx=5)
+        # ---- Sub-frame de fechas ----
+        fecha_frame = ctk.CTkFrame(self.filter_frame)
+        fecha_frame.grid(row=1, column=4, columnspan=2, sticky="ew")
 
+        fecha_frame.grid_columnconfigure(1, weight=1)
+        fecha_frame.grid_columnconfigure(3, weight=1)
+
+        ctk.CTkLabel(fecha_frame, text="Desde:", font=self.label_font).grid(
+            row=0, column=0, padx=2, sticky="w"
+        )
+        self.fecha_ini = ctk.CTkEntry(fecha_frame)
+        self.fecha_ini.grid(row=0, column=1, padx=(2, 10), sticky="ew")
+
+        ctk.CTkLabel(fecha_frame, text="Hasta:", font=self.label_font).grid(
+            row=0, column=2, padx=2, sticky="w"
+        )
+        self.fecha_fin = ctk.CTkEntry(fecha_frame)
+        self.fecha_fin.grid(row=0, column=3, padx=(2, 10), sticky="ew")
+
+        # ---- Botón Buscar ----
+        self.buscar_btn = ctk.CTkButton(
+            self.filter_frame, text="Buscar", command=self.buscar_datos
+        )
+        self.buscar_btn.grid(row=2, column=0, columnspan=6, pady=(8, 0), sticky="e")
+
+    # ---------------------------------------------------------------------
+    #   LÓGICA DE NEGOCIO
+    # ---------------------------------------------------------------------
 
     def import_cruce(self):
         try:
             engine = get_db_connection()
-            # Inyectamos el valor de fecha_option desde el radiobutton
-            fecha_option = self.fecha_option.get()
-            data = get_cruce_data(engine, fecha_option=fecha_option)
-            if data:
-                df_cruce = pd.DataFrame(data)
-                print("Columnas detectadas:", df_cruce.columns.tolist())
-                # Seleccionamos sólo las columnas deseadas
-                df_cruce = df_cruce[desired_cols]
-            else:
-                df_cruce = pd.DataFrame()
-            self.df_cruce = df_cruce.copy()
-            self.populate_tree(self.tree_cruce, self.df_cruce.values.tolist())
+            data = get_cruce_data(engine, fecha_option=self.fecha_option.get())
+            df = pd.DataFrame(data) if data else pd.DataFrame()
+            print("Columnas detectadas:", df.columns.tolist())
+
+            self.df_cruce = df[desired_cols].copy() if not df.empty else df
+            self.populate_tree(self.df_cruce.values.tolist())
+
             messagebox.showinfo("Importación", "Datos importados correctamente.")
+
             if not self.filter_frame:
                 self.create_filter_frame()
+
         except Exception as e:
             messagebox.showerror("Error", f"Fallo en la importación: {e}")
             print("Error en la importación:", e)
 
     def buscar_datos(self):
-        """
-        Filtra los datos ya importados en memoria.
-        """
-        try:
-            if self.df_cruce is None:
-                messagebox.showwarning("Atención", "Primero importe los datos.")
-                return
+        if self.df_cruce is None:
+            messagebox.showwarning("Atención", "Primero importe los datos.")
+            return
 
-            df_filtrado = self.df_cruce.copy()
+        df = self.df_cruce.copy()
+        filtros = {
+            "CodigoBarra": self.codigo_barra_entry.get().strip(),
+            "Referencia": self.referencia_entry.get().strip().lower(),
+            "CategoriaNombre": self.categoria_entry.get().strip().lower(),
+            "Linea": self.linea_entry.get().strip().lower(),
+            "CodigoFabricante": self.fabrica_entry.get().strip()
+        }
 
-            codigo_barra = self.codigo_barra_entry.get().strip()
-            referencia = self.referencia_entry.get().strip()
-            categoria = self.categoria_entry.get().strip()
-            linea = self.linea_entry.get().strip()
-            fabrica = self.fabrica_entry.get().strip()
+        if filtros["CodigoBarra"]:
+            df = df[df["CodigoBarra"].astype(str) == filtros["CodigoBarra"]]
+        if filtros["Referencia"]:
+            df = df[df["Referencia"].str.strip().str.lower() == filtros["Referencia"]]
+        if filtros["CategoriaNombre"]:
+            df = df[df["CategoriaNombre"].str.strip().str.lower() == filtros["CategoriaNombre"]]
+        if filtros["Linea"]:
+            df = df[df["Linea"].str.strip().str.lower() == filtros["Linea"]]
+        if filtros["CodigoFabricante"]:
+            df = df[df["CodigoFabricante"].astype(str).str.strip() == filtros["CodigoFabricante"]]
 
-            if codigo_barra:
-                df_filtrado = df_filtrado[df_filtrado["CodigoBarra"].astype(str) == codigo_barra]
-            if referencia:
-                ref_val = referencia.lower()
-                df_filtrado = df_filtrado[df_filtrado["Referencia"].str.strip().str.lower() == ref_val]
-            if categoria:
-                cat_val = categoria.lower()
-                df_filtrado = df_filtrado[df_filtrado["CategoriaNombre"].str.strip().str.lower() == cat_val]
-            if linea:
-                lin_val = linea.lower()
-                df_filtrado = df_filtrado[df_filtrado["Linea"].str.strip().str.lower() == lin_val]
-            if fabrica:
-                df_filtrado = df_filtrado[df_filtrado["CodigoFabricante"].astype(str).str.strip() == fabrica]
+        self.populate_tree(df.values.tolist())
+        messagebox.showinfo("Búsqueda", "Búsqueda completada.")
 
-            self.populate_tree(self.tree_cruce, df_filtrado.values.tolist())
-            messagebox.showinfo("Búsqueda", "Búsqueda completada.")
-        except Exception as e:
-            messagebox.showerror("Error", f"Fallo en la búsqueda: {e}")
-            print("Error en la búsqueda:", e)
+    # ---------------------------------------------------------------------
+    #   UTILIDADES
+    # ---------------------------------------------------------------------
 
-    def populate_tree(self, tree, data):
-        for item in tree.get_children():
-            tree.delete(item)
-        for row in data:
-            tree.insert("", tk.END, values=row)
+    def populate_tree(self, rows):
+        self.tree_cruce.delete(*self.tree_cruce.get_children())
+        for r in rows:
+            self.tree_cruce.insert("", tk.END, values=r)
 
     def export_excel(self):
+        if self.df_cruce is None:
+            messagebox.showwarning("Atención", "Primero importe los datos.")
+            return
         try:
-            if self.df_cruce is None:
-                messagebox.showwarning("Atención", "Primero importe los datos.")
-                return
-            data = self.df_cruce.copy()
-            data.to_excel("cruce.xlsx", index=False)
-            messagebox.showinfo("Exportación", "Archivo Excel generado exitosamente como 'cruce.xlsx'.")
+            self.df_cruce.to_excel("cruce.xlsx", index=False)
+            messagebox.showinfo("Exportación", "Archivo Excel generado: cruce.xlsx")
         except Exception as e:
             messagebox.showerror("Error", f"Fallo en la exportación: {e}")
-            print("Error en la exportación:", e)
 
+    # Menú contextual ------------------------------------------------------
     def show_context_menu(self, event):
         row_id = self.tree_cruce.identify_row(event.y)
-        column_id = self.tree_cruce.identify_column(event.x)
+        col_id = self.tree_cruce.identify_column(event.x)
         if not row_id:
             return
-        row_values = self.tree_cruce.item(row_id, "values")
         try:
-            col_index = int(column_id.replace("#", "")) - 1
-        except (ValueError, IndexError):
-            col_index = 0
-        cell_value = row_values[col_index] if row_values and col_index < len(row_values) else ""
+            idx = int(col_id.lstrip("#")) - 1
+        except ValueError:
+            idx = 0
+
+        values = self.tree_cruce.item(row_id, "values")
+        cell = values[idx] if idx < len(values) else ""
+
         menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="Copiar", command=lambda: self.copy_to_clipboard(cell_value))
+        menu.add_command(label="Copiar", command=lambda: self.copy_to_clipboard(cell))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -231,11 +281,15 @@ class MainView(ctk.CTk):
     def copy_to_clipboard(self, text):
         self.clipboard_clear()
         self.clipboard_append(text)
-        messagebox.showinfo("Copiado", f"Texto copiado al portapapeles:\n{text}")
+        messagebox.showinfo("Copiado", f"Texto copiado:\n{text}")
 
+
+# -------------------------------------------------------------------------
 def dummy_refresh_function():
+    """Placeholder para compatibilidad con tu arquitectura."""
     return None
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     app = MainView(refresh_callback=dummy_refresh_function)
     app.mainloop()
