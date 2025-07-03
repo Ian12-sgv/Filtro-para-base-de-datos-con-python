@@ -162,25 +162,6 @@ class MainView(ctk.CTk):
         self.linea_entry   = _pair(1, 0, "Línea:")
         self.fabrica_entry = _pair(1, 2, "Código de Fábrica:")
 
-        # ---- Sub-frame de fechas ----
-        fecha_frame = ctk.CTkFrame(self.filter_frame)
-        fecha_frame.grid(row=1, column=4, columnspan=2, sticky="ew")
-
-        fecha_frame.grid_columnconfigure(1, weight=1)
-        fecha_frame.grid_columnconfigure(3, weight=1)
-
-        ctk.CTkLabel(fecha_frame, text="Desde:", font=self.label_font).grid(
-            row=0, column=0, padx=2, sticky="w"
-        )
-        self.fecha_ini = ctk.CTkEntry(fecha_frame)
-        self.fecha_ini.grid(row=0, column=1, padx=(2, 10), sticky="ew")
-
-        ctk.CTkLabel(fecha_frame, text="Hasta:", font=self.label_font).grid(
-            row=0, column=2, padx=2, sticky="w"
-        )
-        self.fecha_fin = ctk.CTkEntry(fecha_frame)
-        self.fecha_fin.grid(row=0, column=3, padx=(2, 10), sticky="ew")
-
         # ---- Botón Buscar ----
         self.buscar_btn = ctk.CTkButton(
             self.filter_frame, text="Buscar", command=self.buscar_datos
