@@ -267,7 +267,8 @@ def run_view():
             text="Exportar a Excel",
             command=lambda: export_demo(main_app, obtener_datos_treeview(main_app.tree_cruce))
         )
-        export_button.pack(pady=10)
+        export_button.grid(row=99, column=0, pady=10, sticky="ew")
+
         
         main_app.mainloop()
     except Exception as e:
