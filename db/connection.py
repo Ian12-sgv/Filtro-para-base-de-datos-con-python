@@ -8,11 +8,32 @@ from queries.query_cruce import get_query_cruce
 # Variable global para el connection string
 DEFAULT_CONNECTION_STR = None
 
-def set_default_instance(config):
+# Instancias predefinidas (solo estas se permiten)
+PREDEFINED_INSTANCES = {
+    "Servidor DOS": {
+        "server_name": "SERVERDOS\\SERVERSQL_DOS",
+        "login": "sa",
+        "password": "j2094l,."
+    },
+    "Analista Local": {
+        "server_name": "DESKTOP-POHBVL8\\ANALISTA",
+        "login": "sa",
+        "password": "123456"
+    }
+}
+
+def set_default_instance(alias):
     """
-    Configura la cadena de conexión a partir del diccionario 'config'.
+    Configura la cadena de conexión usando un alias predefinido.
+    No admite instancias manuales ni detección dinámica.
     """
     global DEFAULT_CONNECTION_STR
+
+    if alias not in PREDEFINED_INSTANCES:
+        raise ValueError(f"Alias '{alias}' no reconocido.")
+
+    config = PREDEFINED_INSTANCES[alias]
+
     password_enc = quote_plus(config['password'])
     DEFAULT_CONNECTION_STR = (
         f"mssql+pyodbc://{config['login']}:{password_enc}@{config['server_name']}/BODEGA_DATOS?driver=SQL+Server"
@@ -21,7 +42,6 @@ def set_default_instance(config):
 def get_db_connection(connection_str=None):
     """
     Retorna una instancia de engine para la conexión a la base de datos.
-    Ajusta el pool de conexiones con pool_size y max_overflow.
     """
     try:
         connection_str = connection_str or DEFAULT_CONNECTION_STR
@@ -34,8 +54,7 @@ def get_db_connection(connection_str=None):
 
 def ensure_final_where(query_base, final_alias="Final2"):
     """
-    Garantiza que la parte final del query (a partir de 'FROM final_alias')
-    cuente con una cláusula WHERE. Si no la contiene, inyecta "WHERE 1 = 1".
+    Garantiza que la parte final del query cuente con una cláusula WHERE.
     """
     m = re.search(rf"(FROM\s+{final_alias}\b.*)$", query_base, flags=re.IGNORECASE | re.DOTALL)
     if m:
@@ -50,11 +69,10 @@ def ensure_final_where(query_base, final_alias="Final2"):
     return query_base
 
 def get_cruce_data(engine, codigo_filter=None, referencia_filter=None,
-                     categoria_filter=None, linea_filter=None, fabrica_filter=None,
-                     fecha_option=2):
+                   categoria_filter=None, linea_filter=None, fabrica_filter=None,
+                   fecha_option=2):
     """
-    Ejecuta el query base generado por get_query_cruce(), inyectando filtros adicionales.
-    Retorna un listado (lista de diccionarios) con los datos obtenidos.
+    Ejecuta el query de cruce con filtros y retorna lista de diccionarios.
     """
     conditions = []
     params = {}
@@ -75,38 +93,25 @@ def get_cruce_data(engine, codigo_filter=None, referencia_filter=None,
         conditions.append("CodigoFabricante = :fabricaFilter")
         params["fabricaFilter"] = fabrica_filter
 
-    # Seleccionar la fecha de inicio según la opción
-    if fecha_option == 1:
-        params["fechaStart"] = '2023-01-01'
-    else:
-        params["fechaStart"] = '2024-01-01'
+    params["fechaStart"] = '2023-01-01' if fecha_option == 1 else '2024-01-01'
 
-    # Obtener el query base y quitar el punto y coma final si existe
-    base_query = get_query_cruce().strip()
-    if base_query.endswith(';'):
-        base_query = base_query[:-1]
-
-    # Inyectar el valor de :fechaStart en la parte WITH para evitar discrepancias de estructura
+    base_query = get_query_cruce().strip().rstrip(';')
     base_query = base_query.replace(":fechaStart", f"'{params['fechaStart']}'")
     del params["fechaStart"]
 
-    base_query = ensure_final_where(base_query, final_alias="Final2")
+    base_query = ensure_final_where(base_query, "Final2")
     filter_clause = " AND " + " AND ".join(conditions) if conditions else ""
     full_sql = base_query + filter_clause + " ORDER BY FechaLlegada ASC"
-    
-    full_query = text(full_sql)
+
     with engine.connect() as conn:
-        result = conn.execute(full_query, params).fetchall()
-    data = [dict(row._mapping) for row in result]
-    return data
+        result = conn.execute(text(full_sql), params).fetchall()
+    return [dict(row._mapping) for row in result]
 
 def get_cruce_data_df(engine, codigo_filter=None, referencia_filter=None,
-                       categoria_filter=None, linea_filter=None, fabrica_filter=None,
-                       fecha_option=2, chunksize=50000):
+                      categoria_filter=None, linea_filter=None, fabrica_filter=None,
+                      fecha_option=2, chunksize=50000):
     """
-    Versión para exploración interactiva.
-    Ejecuta el query con filtros aplicados y devuelve un DataFrame de Pandas.
-    Se utiliza 'chunksize' para procesar grandes volúmenes de datos de forma iterativa.
+    Versión para Pandas DataFrame.
     """
     conditions = []
     params = {}
@@ -127,23 +132,15 @@ def get_cruce_data_df(engine, codigo_filter=None, referencia_filter=None,
         conditions.append("CodigoFabricante = :fabricaFilter")
         params["fabricaFilter"] = fabrica_filter
 
-    if fecha_option == 1:
-        params["fechaStart"] = '2023-01-01'
-    else:
-        params["fechaStart"] = '2024-01-01'
+    params["fechaStart"] = '2023-01-01' if fecha_option == 1 else '2024-01-01'
 
-    base_query = get_query_cruce().strip()
-    if base_query.endswith(';'):
-        base_query = base_query[:-1]
-
+    base_query = get_query_cruce().strip().rstrip(';')
     base_query = base_query.replace(":fechaStart", f"'{params['fechaStart']}'")
     del params["fechaStart"]
 
-    base_query = ensure_final_where(base_query, final_alias="Final2")
+    base_query = ensure_final_where(base_query, "Final2")
     filter_clause = " AND " + " AND ".join(conditions) if conditions else ""
     full_sql = base_query + filter_clause + " ORDER BY FechaLlegada ASC"
 
-    # Procesamiento en chunks para reducir uso de memoria y gestionar grandes volúmenes
     df_iter = pd.read_sql(full_sql, con=engine, params=params, chunksize=chunksize)
-    df = pd.concat(df_iter, ignore_index=True)
-    return df
+    return pd.concat(df_iter, ignore_index=True)
