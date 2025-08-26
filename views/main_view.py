@@ -130,11 +130,20 @@ class MainView(ctk.CTk):
             return entry
 
         self.codigo_barra_entry = _pair(0, 0, "Código Barra:")
-        self.referencia_entry = _pair(0, 2, "Referencia:")
-        self.categoria_entry = _pair(0, 4, "Categoría:")
+        self.referencia_entry   = _pair(0, 2, "Referencia:")
+        self.categoria_entry    = _pair(0, 4, "Categoría:")
 
-        self.linea_entry = _pair(1, 0, "Línea:")
-        self.fabrica_entry = _pair(1, 2, "Código de Fábrica:")
+        self.linea_entry        = _pair(1, 0, "Línea:")
+        self.fabrica_entry      = _pair(1, 2, "Código de Fábrica:")
+
+        # ✅ NUEVO: checkbox "Solo corrección = 0"
+        self.correccion_cero_var = tk.IntVar(value=0)
+        self.correccion_cero_chk = ctk.CTkCheckBox(
+            self.filter_frame,
+            text="Solo corrección = 0",
+            variable=self.correccion_cero_var
+        )
+        self.correccion_cero_chk.grid(row=1, column=4, columnspan=2, padx=(2, 10), pady=2, sticky="w")
 
         self.buscar_btn = ctk.CTkButton(
             self.filter_frame, text="Buscar", command=self.buscar_datos
@@ -169,19 +178,25 @@ class MainView(ctk.CTk):
             "Referencia": self.referencia_entry.get().strip().lower(),
             "CategoriaNombre": self.categoria_entry.get().strip().lower(),
             "Linea": self.linea_entry.get().strip().lower(),
-            "CodigoFabricante": self.fabrica_entry.get().strip()
+            "CodigoFabricante": self.fabrica_entry.get().strip(),
+            "CorreccionCero": bool(self.correccion_cero_var.get()),  # ✅ nuevo
         }
 
-        if filtros["CodigoBarra"]:
+        if "CodigoBarra" in df.columns and filtros["CodigoBarra"]:
             df = df[df["CodigoBarra"].astype(str) == filtros["CodigoBarra"]]
-        if filtros["Referencia"]:
-            df = df[df["Referencia"].str.strip().str.lower() == filtros["Referencia"]]
-        if filtros["CategoriaNombre"]:
-            df = df[df["CategoriaNombre"].str.strip().str.lower() == filtros["CategoriaNombre"]]
-        if filtros["Linea"]:
-            df = df[df["Linea"].str.strip().str.lower() == filtros["Linea"]]
-        if filtros["CodigoFabricante"]:
+        if "Referencia" in df.columns and filtros["Referencia"]:
+            df = df[df["Referencia"].astype(str).str.strip().str.lower() == filtros["Referencia"]]
+        if "CategoriaNombre" in df.columns and filtros["CategoriaNombre"]:
+            df = df[df["CategoriaNombre"].astype(str).str.strip().str.lower() == filtros["CategoriaNombre"]]
+        if "Linea" in df.columns and filtros["Linea"]:
+            df = df[df["Linea"].astype(str).str.strip().str.lower() == filtros["Linea"]]
+        if "CodigoFabricante" in df.columns and filtros["CodigoFabricante"]:
             df = df[df["CodigoFabricante"].astype(str).str.strip() == filtros["CodigoFabricante"]]
+
+        # ✅ aplicar checkbox: solo corrección == 0
+        if filtros["CorreccionCero"] and "correccion" in df.columns:
+            mask = pd.to_numeric(df["correccion"], errors="coerce") == 0
+            df = df[mask]
 
         self.populate_tree(df.values.tolist())
 
