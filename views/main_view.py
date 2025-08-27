@@ -38,6 +38,53 @@ class MainView(ctk.CTk):
 
         self.filter_frame = None
 
+    # ---------------------------- helpers ---------------------------------
+
+    def _recalc_visible_totals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Recalcula:
+        - Cantidad_Inicial_Agrupada = suma de CantidadInicial por CodigoBarra SOLO con las filas visibles (df).
+        - Queda, Vendido = porcentajes usando ese nuevo denominador visible.
+        No modifica tus filtros; solo ajusta columnas calculadas para lo que se muestra.
+        """
+        if df.empty:
+            return df
+
+        # Asegurar tipos numéricos (evita problemas con strings)
+        if "CantidadInicial" in df.columns:
+            df["CantidadInicial"] = pd.to_numeric(df["CantidadInicial"], errors="coerce").fillna(0)
+        else:
+            df["CantidadInicial"] = 0
+
+        if "ExistenciaActual" in df.columns:
+            df["ExistenciaActual"] = pd.to_numeric(df["ExistenciaActual"], errors="coerce").fillna(0)
+        else:
+            df["ExistenciaActual"] = 0
+
+        # Suma visible por CodigoBarra
+        if "CodigoBarra" in df.columns:
+            tot_visible = df.groupby("CodigoBarra")["CantidadInicial"].transform("sum")
+        else:
+            # Si no existiera (no debería), usa suma global
+            tot_visible = pd.Series(df["CantidadInicial"].sum(), index=df.index)
+
+        # Actualiza la columna con el total visible
+        df["Cantidad_Inicial_Agrupada"] = tot_visible
+
+        # Recalcular Queda/Vendido con ese denominador visible
+        denom = tot_visible.replace(0, pd.NA)
+        queda_num = ((df["ExistenciaActual"] * 100) / denom).astype("float")
+        queda_num = queda_num.fillna(0).round(2)
+        vendido_num = (100 - queda_num).round(2)
+
+        # Formato con coma y %
+        df["Queda"] = queda_num.map(lambda x: f"{x:.2f}%".replace(".", ","))
+        df["Vendido"] = vendido_num.map(lambda x: f"{x:.2f}%".replace(".", ","))
+
+        return df
+
+    # ---------------------------- UI --------------------------------------
+
     def _build_button_bar(self):
         self.button_frame = ctk.CTkFrame(self)
         self.button_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
@@ -150,12 +197,18 @@ class MainView(ctk.CTk):
         )
         self.buscar_btn.grid(row=2, column=0, columnspan=6, pady=(8, 0), sticky="e")
 
+    # ---------------------------- data flow --------------------------------
+
     def import_cruce(self):
         try:
             engine = get_db_connection()
             data = get_cruce_data(engine, fecha_option=self.fecha_option.get())
             df = pd.DataFrame(data) if data else pd.DataFrame()
 
+            # Recalcular totales para el conjunto visible actual (todo el dataset)
+            df = self._recalc_visible_totals(df.copy())
+
+            # Mantener solo las columnas deseadas
             self.df_cruce = df[desired_cols].copy() if not df.empty else df
             self.populate_tree(self.df_cruce.values.tolist())
 
@@ -179,7 +232,7 @@ class MainView(ctk.CTk):
             "CategoriaNombre": self.categoria_entry.get().strip().lower(),
             "Linea": self.linea_entry.get().strip().lower(),
             "CodigoFabricante": self.fabrica_entry.get().strip(),
-            "CorreccionCero": bool(self.correccion_cero_var.get()),  # ✅ nuevo
+            "CorreccionCero": bool(self.correccion_cero_var.get()),
         }
 
         if "CodigoBarra" in df.columns and filtros["CodigoBarra"]:
@@ -193,10 +246,15 @@ class MainView(ctk.CTk):
         if "CodigoFabricante" in df.columns and filtros["CodigoFabricante"]:
             df = df[df["CodigoFabricante"].astype(str).str.strip() == filtros["CodigoFabricante"]]
 
-        # ✅ aplicar checkbox: solo corrección == 0
         if filtros["CorreccionCero"] and "correccion" in df.columns:
             mask = pd.to_numeric(df["correccion"], errors="coerce") == 0
             df = df[mask]
+
+        # 🔁 Recalcular totales (agrupada/porcentajes) con SOLO estas filas visibles
+        df = self._recalc_visible_totals(df.copy())
+
+        # Mantener columnas en el orden esperado
+        df = df.reindex(columns=desired_cols)
 
         self.populate_tree(df.values.tolist())
 
